@@ -1110,8 +1110,43 @@ static int cursor_at(const Uint32 *f, int hx, int hy)
     return n;
 }
 
+/* A clean copy of the bottom-right corner, taken while the pointer is
+ * elsewhere, one per screen layout. Used to restore the real pixels under
+ * the parked cursor. */
+#define CORNER_X 290
+#define CORNER_Y 176
+#define CORNER_W 30
+#define CORNER_H 24
+static Uint32 g_corner[5][CORNER_W * CORNER_H];
+static int g_corner_ok[5];
+
+static void corner_snapshot(void)
+{
+    if (g_fw != 320 || g_fh != 200) return;
+    /* pointer must be well clear of the corner so the copy is clean */
+    if (g_ptr_x > CORNER_X - 16 && g_ptr_y > CORNER_Y - 20) return;
+    for (int y = 0; y < CORNER_H; y++)
+        SDL_memcpy(&g_corner[g_mode][y * CORNER_W], &g_frame[(CORNER_Y + y) * g_fw + CORNER_X], CORNER_W * 4);
+    g_corner_ok[g_mode] = 1;
+}
+
+/* the copy still fits if the corner (outside the cursor) looks the same */
+static int corner_fits(const unsigned char *mask)
+{
+    if (!g_corner_ok[g_mode]) return 0;
+    int diff = 0, n = 0;
+    for (int y = 0; y < CORNER_H; y++)
+        for (int x = 0; x < CORNER_W; x++) {
+            if (mask[y * CORNER_W + x]) continue;
+            n++;
+            if (g_corner[g_mode][y * CORNER_W + x] != g_frame[(CORNER_Y + y) * g_fw + CORNER_X + x]) diff++;
+        }
+    return diff * 50 <= n; /* allow 2% for small animations */
+}
+
 /* Copy the frame for display. While the pointer is parked, find the cursor in
- * the bottom-right corner and paint it out with the colours beside it. */
+ * the bottom-right corner and paint it out: with the real background from the
+ * clean corner copy when it still fits, otherwise with the colours beside it. */
 static void update_display(void)
 {
     if (!g_frame || g_disp_serial == g_frame_serial) return;
@@ -1119,7 +1154,8 @@ static void update_display(void)
     if (!g_disp || cap != g_fw * g_fh) { SDL_free(g_disp); cap = g_fw * g_fh; g_disp = (Uint32 *)SDL_malloc((size_t)cap * 4); }
     SDL_memcpy(g_disp, g_frame, (size_t)cap * 4);
     g_disp_serial = g_frame_serial;
-    if (!g_parked || !cfg_int("hide_parked_cursor", 1) || g_fw != 320) return;
+    if (!g_parked) { corner_snapshot(); return; }
+    if (!cfg_int("hide_parked_cursor", 1) || g_fw != 320) return;
     /* The game redraws its cursor every frame, so a captured frame can hold
      * it whole, half-drawn or not at all. Find where it parks (it always
      * clamps to the same spot) and paint that spot every frame. */
@@ -1133,6 +1169,19 @@ static void update_display(void)
             if (n > best) { best = n; fx = hx; fy = hy; }
         }
     if (fx >= 0) { bx = fx; by = fy; }
+    /* cursor mask within the corner window */
+    unsigned char mask[CORNER_W * CORNER_H];
+    SDL_memset(mask, 0, sizeof mask);
+    for (int r = 0; CURSOR_ROWS[r]; r++)
+        for (int c = 0; CURSOR_ROWS[r][c]; c++) {
+            int x = bx + c - CORNER_X, y = by + r - CORNER_Y;
+            if (CURSOR_ROWS[r][c] != '.' && x >= 0 && x < CORNER_W && y >= 0 && y < CORNER_H) mask[y * CORNER_W + x] = 1;
+        }
+    if (bx >= CORNER_X && by >= CORNER_Y && corner_fits(mask)) {
+        for (int i = 0; i < CORNER_W * CORNER_H; i++)
+            if (mask[i]) g_disp[(CORNER_Y + i / CORNER_W) * g_fw + CORNER_X + i % CORNER_W] = g_corner[g_mode][i];
+        return;
+    }
     for (int r = 0; CURSOR_ROWS[r] && by + r < g_fh; r++) {
         int y = by + r, x0 = -1, x1 = -1;
         for (int c = 0; CURSOR_ROWS[r][c]; c++)
@@ -1713,6 +1762,8 @@ static void script_step(void)
         else if (!SDL_strcmp(cmd, "touchmove")) touch_move(SDL_atoi(a1) / 1024.0f, SDL_atoi(a2) / 768.0f);
         else if (!SDL_strcmp(cmd, "touchup")) touch_up();
         else if (!SDL_strcmp(cmd, "finger2")) touch_second_finger();
+        else if (!SDL_strcmp(cmd, "throttle")) g_nothrottle = !SDL_strcmp(a1, "off");
+        else if (!SDL_strcmp(cmd, "ticks")) SDL_Log("ticks: %u frame %d", SDL_GetTicks(), g_frame_no);
         else if (!SDL_strcmp(cmd, "sdlkey")) { /* push a real key press+release through SDL */
             SDL_Event ev; SDL_zero(ev);
             ev.type = SDL_KEYDOWN; ev.key.keysym.scancode = SDL_GetScancodeFromName(a1);
@@ -1813,6 +1864,8 @@ static void default_options(void)
         {"dosbox_pure_menu_time", "0"},
         {"dosbox_pure_savestate", "disabled"},
         {"dosbox_pure_sblaster_conf", "A220 I7 D1 H5"},
+        {"dosbox_pure_cycles", "max"},
+        {"dosbox_pure_cycle_limit", "0.95"},
         {NULL, NULL}};
     for (int i = 0; defs[i][0]; i++) cfg_set(defs[i][0], defs[i][1]);
 }

@@ -43,6 +43,10 @@ Saves go into `gamedata/save/`, like on the original PC. File > Exit in the game
 
 To leave, click the keyboard on the desk and choose EXIT. Tap once during the credits to skip them, and the port closes. Holding **Home** or pressing **Select + Start** quits at any time.
 
+## Speed
+
+The game has no speed limit of its own. At NPR MAX it runs as fast as the CPU allows, which is why it slowed down on 1993 PCs as the herd grew. The port tells DOSBox Pure to emulate as fast as the device can (`dosbox_pure_cycles = max`) instead of a period CPU. On a test PC that ran a 300-creature lab about 11× faster than the old setting. `dosbox_pure_cycle_limit` trades simulation speed against screen smoothness, and setting `dosbox_pure_cycles = auto` restores the original speed. Battles run faster too.
+
 ## Settings
 
 All settings are in `usds.cfg`: the slice row, pan speed, scaling, button bindings, pointer parking and touch orientation. If touch lands in the wrong place, try `touch_swap_xy`, `touch_invert_x` and `touch_invert_y`. If the two screens come up the wrong way round, set `swap_screens = 1`, or set `USDS_SWAP_OUTPUTS=1` in the launcher.
