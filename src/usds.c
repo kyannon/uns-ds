@@ -1186,7 +1186,9 @@ static const char *ACTION_NAMES[A_COUNT] = {
     "top", "bottom", "pan_left", "pan_right", "disk", "right_click", "keyboard", "shift", "enter", "escape",
     "hotkey", "swap_screens"
 };
-/* Defaults for the RG DS on ROCKNIX. SDL names: a = bottom button (B),
+/* Controls are mirrored left/right (D-pad side and face-button side) so either
+ * hand can work the buttons while the other holds the stylus.
+ * Defaults for the RG DS on ROCKNIX. SDL names: a = bottom button (B),
  * b = right button (A), x = top button (X), y = left button (Y). */
 static const char *ACTION_DEFAULTS[A_COUNT] = {
     "dpup,x",                        /* top half: D-pad up or X */
@@ -1194,9 +1196,9 @@ static const char *ACTION_DEFAULTS[A_COUNT] = {
     "leftshoulder,rightshoulder",    /* L1 / R1: pan left */
     "lefttrigger,righttrigger",      /* L2 / R2: pan right */
     "start",                         /* Start: click the floppy disk */
-    "b",                             /* hold A + tap = right click (or tap with two fingers) */
+    "b,dpright",                     /* hold A or D-pad right + tap = right click (or tap with two fingers) */
     "back",                          /* Select: on-screen keyboard */
-    "y,dpright",                     /* hold Y or D-pad right: Shift (vertical walls) */
+    "y,dpleft",                      /* hold Y or D-pad left: Shift (vertical walls) */
     "",                              /* Enter: on-screen keyboard */
     "leftstick",                     /* L3, if present: Escape (stop sorts, skip animations) */
     "guide",                         /* Menu button as hotkey */

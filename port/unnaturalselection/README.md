@@ -22,15 +22,17 @@ The game runs in DOSBox Pure. This port uses the copy built into ROCKNIX.
 
 ## Controls
 
+Each action is on both sides of the device (D-pad side and face-button side), so the buttons work with whichever hand isn't holding the stylus.
+
 | Button | Action |
 |---|---|
 | Tap / drag (bottom screen) | Left mouse button |
-| Hold **A** + tap, or tap with two fingers | Right mouse button (scroll at Zoom 2, fast-load cargo, fast-transfer in the Database) |
+| Hold **A** or **D-pad ▶** + tap, or tap with two fingers | Right mouse button (scroll at Zoom 2, fast-load cargo, fast-transfer in the Database) |
 | **D-pad ▲** or **X** | Top half · press again for full screen |
 | **D-pad ▼** or **B** | Bottom half · press again for full screen |
 | **L1** / **R1** | Pan left (hold to scroll) |
 | **L2** / **R2** | Pan right (hold to scroll) |
-| Hold **Y** or **D-pad ▶** | Shift (vertical walls) |
+| Hold **Y** or **D-pad ◀** | Shift (vertical walls) |
 | **Start** | Click the floppy drive (File / Options / Variables / Battle menus) |
 | **Select** | On-screen keyboard (for naming saves; also has Enter and Esc) |
 | **L3** (if fitted) | Escape (stop a sort, skip animations) |
