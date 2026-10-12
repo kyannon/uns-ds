@@ -1251,8 +1251,8 @@ static const char *ACTION_NAMES[A_COUNT] = {
 static const char *ACTION_DEFAULTS[A_COUNT] = {
     "dpup,x",                        /* top half: D-pad up or X */
     "dpdown,a",                      /* bottom half: D-pad down or B */
-    "leftshoulder,righttrigger",     /* L1 / R2: pan left */
-    "lefttrigger,rightshoulder",     /* L2 / R1: pan right */
+    "leftshoulder,righttrigger",     /* L1 / R1: pan left (the RG DS reports R1 as righttrigger) */
+    "lefttrigger,rightshoulder",     /* L2 / R2: pan right */
     "start,leftstick",               /* Start or L3: click the floppy disk */
     "b,dpright",                     /* hold A or D-pad right + tap = right click (or tap with two fingers) */
     "back,BTN_Z,key:F1",             /* Select or BACK: on-screen keyboard (RG DS Plus BACK = BTN_Z on adc-keys-back) */
