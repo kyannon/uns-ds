@@ -362,6 +362,7 @@ static int g_qh, g_qt;
 static int g_wait_until, g_btn_down_frame[2];
 static float g_saved_x, g_saved_y;
 static int g_parked; /* pointer is parked in the corner (cursor gets hidden) */
+static int g_unparked_at = -1000; /* frame the pointer last left the corner */
 
 static void q_push(int type, float x, float y, int a)
 {
@@ -400,6 +401,7 @@ static void q_process(void)
         switch (e->type) {
         case EV_MOVE:
             g_ptr_x = e->x; g_ptr_y = e->y;
+            if (g_parked && e->a != 1) g_unparked_at = g_frame_no;
             g_parked = e->a == 1;
             break;
         case EV_RESTORE:
@@ -1154,7 +1156,10 @@ static void update_display(void)
     if (!g_disp || cap != g_fw * g_fh) { SDL_free(g_disp); cap = g_fw * g_fh; g_disp = (Uint32 *)SDL_malloc((size_t)cap * 4); }
     SDL_memcpy(g_disp, g_frame, (size_t)cap * 4);
     g_disp_serial = g_frame_serial;
-    if (!g_parked) { corner_snapshot(); return; }
+    /* After a tap the game takes a few frames to redraw its cursor at the new
+     * spot, so keep covering the corner for a moment after leaving it. */
+    int grace = g_frame_no - g_unparked_at < cfg_int("unpark_cover_frames", 10);
+    if (!g_parked && !grace) { corner_snapshot(); return; }
     if (!cfg_int("hide_parked_cursor", 1) || g_fw != 320) return;
     /* The game redraws its cursor every frame, so a captured frame can hold
      * it whole, half-drawn or not at all. Find where it parks (it always

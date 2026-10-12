@@ -17,7 +17,7 @@ See [`port/unnaturalselection/README.md`](port/unnaturalselection/README.md) for
 | Path | What |
 |---|---|
 | `src/usds.c` | The frontend: views, touch (raw evdev or SDL), buttons, on-screen keyboard |
-| `port/` | What goes on the SD card: launcher script, config, README, EmulationStation media (`images/`) and a `gamelist.xml` entry |
+| `port/` | What goes on the SD card: launcher script, config, README |
 | `cross/build_aarch64.sh` | Cross-build for ARM64 with clang + lld, no sysroot needed (SDL2 headers only) |
 | `build_x86.sh` | Desktop build for testing: both screens stacked in one window, mouse acts as the stylus |
 | `tools/` | Headless test runner and a synthetic touch-panel feeder |

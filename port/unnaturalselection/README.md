@@ -18,8 +18,7 @@ The game runs in DOSBox Pure. This port uses the copy built into ROCKNIX.
 
 1. Copy `UnnaturalSelection.sh` and the `unnaturalselection` folder into your ports folder, for example `/storage/roms/ports/`.
 2. If `unnaturalselection/gamedata/` is empty, copy the DOS game files (`UNS.EXE`, `UNS_LAB.EXE`, `DATA`, `ISLANDS`, `SAVE`, …) into it.
-3. Optional: copy `images/` into the ports folder too and add the block from `gamelist-entry.xml` to `ports/gamelist.xml` for a screenshot, box art and marquee in EmulationStation.
-4. Refresh the game list in EmulationStation and launch **UnnaturalSelection** from Ports.
+3. Refresh the game list in EmulationStation and launch **UnnaturalSelection** from Ports.
 
 ## Controls
 
