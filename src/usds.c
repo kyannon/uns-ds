@@ -1072,8 +1072,11 @@ static void classify_screen(void)
         }
     }
     if (m == g_mode) { g_mode_candidate = -1; return; }
-    if (m != g_mode_candidate) { g_mode_candidate = m; g_mode_votes = 1; return; }
-    if (++g_mode_votes >= 2) {
+    /* lab, battle, console and desk are recognised positively, so switch at
+     * once; "other" is the fallback and must hold for a few frames first */
+    int need = m == MODE_OTHER ? 4 : 1;
+    if (m != g_mode_candidate) { g_mode_candidate = m; g_mode_votes = 0; }
+    if (++g_mode_votes >= need) {
         SDL_Log("screen: %s -> %s (program %s)", MODE_NAMES[g_mode], MODE_NAMES[m], g_prog);
         g_mode = m;
         g_mode_candidate = -1;
@@ -1117,13 +1120,17 @@ static void update_display(void)
     SDL_memcpy(g_disp, g_frame, (size_t)cap * 4);
     g_disp_serial = g_frame_serial;
     if (!g_parked || !cfg_int("hide_parked_cursor", 1) || g_fw != 320) return;
-    int bx = -1, by = -1, best = 3;
+    /* The game redraws its cursor every frame, so a captured frame can hold
+     * it whole, half-drawn or not at all. Find where it parks (it always
+     * clamps to the same spot) and paint that spot every frame. */
+    static int bx = 310, by = 194;
+    int best = 3, fx = -1, fy = -1;
     for (int hy = 150; hy < g_fh; hy++)
         for (int hx = 270; hx < g_fw; hx++) {
             int n = cursor_at(g_frame, hx, hy);
-            if (n > best) { best = n; bx = hx; by = hy; }
+            if (n > best) { best = n; fx = hx; fy = hy; }
         }
-    if (bx < 0) return;
+    if (fx >= 0) { bx = fx; by = fy; }
     for (int r = 0; CURSOR_ROWS[r] && by + r < g_fh; r++) {
         int y = by + r, x0 = -1, x1 = -1;
         for (int c = 0; CURSOR_ROWS[r][c]; c++)
@@ -1575,13 +1582,15 @@ static void evdev_poll(void)
  * for bindings written as BTN_BACK / evdev:CODE. Works when no other
  * process has grabbed the device; otherwise the key:… binding covers it. */
 static int g_keyfd[8], g_nkeyfd;
+static char g_keyname[8][64];
 static void evkeys_open(void)
 {
     int want[32], nwant = 0;
     for (int a = 0; a < A_COUNT; a++)
         for (int i = 0; i < g_nbind[a]; i++)
             if (g_bind[a][i] >= ID_EVDEV && nwant < 32) want[nwant++] = g_bind[a][i] - ID_EVDEV;
-    if (!nwant) return;
+    int logall = cfg_int("log_raw_buttons", 1);
+    if (!nwant && !logall) return;
     for (int i = 0; i < 32 && g_nkeyfd < 8; i++) {
         char path[64];
         SDL_snprintf(path, sizeof path, "/dev/input/event%d", i);
@@ -1592,11 +1601,13 @@ static void evkeys_open(void)
         char name[128] = "";
         ioctl(fd, EVIOCGBIT_(1, sizeof keybits), keybits);
         ioctl(fd, EVIOCGNAME_(sizeof name), name);
-        int hit = 0;
+        int hit = 0, nkeys = 0;
         for (int w = 0; w < nwant; w++) if (want[w] < 768 && test_bit(keybits, want[w])) hit = 1;
-        if (!hit) { close(fd); continue; }
+        for (int b = 0; b < 768; b++) if (test_bit(keybits, b)) nkeys++;
+        SDL_Log("input: device %s '%s' (%d buttons%s)", path, name, nkeys, test_bit(keybits, 0x116) ? ", has BTN_BACK" : "");
+        if (!hit && !(logall && nkeys)) { close(fd); continue; }
+        SDL_strlcpy(g_keyname[g_nkeyfd], name, sizeof g_keyname[0]);
         g_keyfd[g_nkeyfd++] = fd;
-        SDL_Log("input: reading extra buttons from %s '%s'", path, name);
     }
 }
 static void evkeys_poll(void)
@@ -1609,6 +1620,8 @@ static void evkeys_poll(void)
                 if (ev[i].type == 1 && ev[i].value != 2) {
                     int id = ID_EVDEV + ev[i].code;
                     if (input_bound(id)) pad_input(id, ev[i].value != 0);
+                    else if (ev[i].value == 1 && cfg_int("log_raw_buttons", 1))
+                        SDL_Log("input: raw button code %d (0x%x) from '%s'", ev[i].code, ev[i].code, g_keyname[f]);
                 }
     }
 }
@@ -2097,7 +2110,7 @@ int main(int argc, char **argv)
             q_process();
             core.run();
             g_frame_no++;
-            if ((g_frame_no & 7) == 0) classify_screen();
+            classify_screen();
             if (g_inject_park && q_empty()) { g_inject_park = 0; park_later(cfg_int("park_delay_frames", 45)); }
             if (g_park_due && g_frame_no >= g_park_due && q_empty() && !g_touch_down) {
                 if (!game_menu_open() && SDL_fabsf(g_stick[0]) < 0.2f && SDL_fabsf(g_stick[1]) < 0.2f) {
