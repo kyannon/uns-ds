@@ -47,7 +47,7 @@ To leave, click the keyboard on the desk and choose EXIT. Tap once during the cr
 
 All settings are in `usds.cfg`: the slice row, pan speed, scaling, button bindings, pointer parking and touch orientation. If touch lands in the wrong place, try `touch_swap_xy`, `touch_invert_x` and `touch_invert_y`. If the two screens come up the wrong way round, set `swap_screens = 1`, or set `USDS_SWAP_OUTPUTS=1` in the launcher.
 
-`log.txt` is written on each run. It lists the outputs, the touch device that was picked, the controller name and any button press that isn't bound to anything, which is the first thing to check when something misbehaves.
+`log.txt` is written on each run. It lists the outputs, the touch device that was picked, the input devices and the controller name (set `log_raw_buttons = 1` to also log presses of unbound buttons), which is the first thing to check when something misbehaves.
 
 ## Building
 

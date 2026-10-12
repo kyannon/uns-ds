@@ -1124,7 +1124,9 @@ static void update_display(void)
      * it whole, half-drawn or not at all. Find where it parks (it always
      * clamps to the same spot) and paint that spot every frame. */
     static int bx = 310, by = 194;
-    int best = 3, fx = -1, fy = -1;
+    /* only a clear match moves the painted spot: on frames where the game has
+     * erased its cursor, small chance matches elsewhere must not win */
+    int best = 14, fx = -1, fy = -1;
     for (int hy = 150; hy < g_fh; hy++)
         for (int hx = 270; hx < g_fw; hx++) {
             int n = cursor_at(g_frame, hx, hy);
@@ -1204,7 +1206,7 @@ static const char *ACTION_DEFAULTS[A_COUNT] = {
     "lefttrigger,righttrigger",      /* L2 / R2: pan right */
     "start,leftstick",               /* Start or L3: click the floppy disk */
     "b,dpright",                     /* hold A or D-pad right + tap = right click (or tap with two fingers) */
-    "back,key:F1,BTN_BACK",          /* Select or BACK: on-screen keyboard (ROCKNIX sends BACK as F1) */
+    "back,BTN_Z,key:F1",             /* Select or BACK: on-screen keyboard (RG DS Plus BACK = BTN_Z on adc-keys-back) */
     "y,dpleft",                      /* hold Y or D-pad left: Shift (vertical walls) */
     "",                              /* Enter: on-screen keyboard */
     "",                              /* Escape: on-screen keyboard */
@@ -1228,7 +1230,7 @@ static int evdev_code_from_name(const char *t)
 {
     if (!SDL_strncmp(t, "evdev:", 6)) t += 6;
     static const struct { const char *n; int c; } names[] = {
-        {"BTN_BACK", 0x116}, {"BTN_MODE", 0x13c}, {"BTN_SELECT", 0x13a}, {"BTN_START", 0x13b},
+        {"BTN_BACK", 0x116}, {"BTN_Z", 0x135}, {"BTN_MODE", 0x13c}, {"BTN_SELECT", 0x13a}, {"BTN_START", 0x13b},
         {"KEY_PLAYPAUSE", 164}, {"KEY_BACK", 158}, {"KEY_HOMEPAGE", 172}, {NULL, 0}};
     for (int i = 0; names[i].n; i++) if (!SDL_strcasecmp(t, names[i].n)) return names[i].c;
     return SDL_atoi(t);
