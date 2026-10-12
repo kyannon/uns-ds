@@ -262,6 +262,8 @@ static bool core_environment(unsigned cmd, void *data)
 
 /* ---- video -------------------------------------------------------------- */
 static Uint32 *g_frame;        /* XRGB8888, g_fw*g_fh */
+static Uint32 *g_disp;         /* what is shown: g_frame, minus the parked cursor */
+static int g_disp_serial = -1;
 static int g_fw, g_fh, g_frame_serial;
 
 static void core_video(const void *data, unsigned w, unsigned h, size_t pitch)
@@ -359,6 +361,7 @@ static QEvent g_q[QMAX];
 static int g_qh, g_qt;
 static int g_wait_until, g_btn_down_frame[2];
 static float g_saved_x, g_saved_y;
+static int g_parked; /* pointer is parked in the corner (cursor gets hidden) */
 
 static void q_push(int type, float x, float y, int a)
 {
@@ -397,6 +400,7 @@ static void q_process(void)
         switch (e->type) {
         case EV_MOVE:
             g_ptr_x = e->x; g_ptr_y = e->y;
+            g_parked = e->a == 1;
             break;
         case EV_RESTORE:
             g_ptr_x = g_saved_x; g_ptr_y = g_saved_y;
@@ -726,7 +730,7 @@ static void rc_upload(RCtx *rc)
         rc->uploaded_serial = -1;
     }
     if (rc->uploaded_serial == g_frame_serial) return;
-    SDL_UpdateTexture(rc->frame_tex, NULL, g_frame, g_fw * 4);
+    SDL_UpdateTexture(rc->frame_tex, NULL, g_disp ? g_disp : g_frame, g_fw * 4);
     if (rc->sharp_tex) {
         SDL_SetRenderTarget(rc->ren, rc->sharp_tex);
         SDL_RenderSetViewport(rc->ren, NULL);
@@ -1033,6 +1037,7 @@ static int is_credits_picture(void)
 }
 
 static int g_title_captured;
+static int g_desk_seen;
 static int g_mode_candidate = -1, g_mode_votes;
 static const char *MODE_NAMES[] = {"other", "lab", "battle", "desk", "console"};
 
@@ -1072,7 +1077,60 @@ static void classify_screen(void)
         SDL_Log("screen: %s -> %s (program %s)", MODE_NAMES[g_mode], MODE_NAMES[m], g_prog);
         g_mode = m;
         g_mode_candidate = -1;
+        if (m == MODE_DESK) g_desk_seen = 1;
         if (m == MODE_LAB || m == MODE_BATTLE) g_last_layout = m == MODE_LAB ? 0 : 1;
+    }
+}
+
+/* The game's arrow cursor (hotspot at row 0, column 0). k = black, W = white. */
+static const char *const CURSOR_ROWS[] = {
+    "k", "kk", "kWk", "kWWk", "kWWWk", "kWWWWk", "kWWWWWk", "kWWWWWWk", "kWWWWWWWk",
+    "kWWWWWWWWk", "kWWWWWWkkk", "kkkkWWWWk", "....kWWWk", ".....kkkk", NULL};
+
+/* does the cursor sprite sit at (hx,hy)? returns the number of visible
+ * sprite pixels that match, or 0 if any visible pixel doesn't */
+static int cursor_at(const Uint32 *f, int hx, int hy)
+{
+    int n = 0;
+    for (int r = 0; CURSOR_ROWS[r]; r++) {
+        int y = hy + r;
+        if (y >= g_fh) break;
+        for (int c = 0; CURSOR_ROWS[r][c]; c++) {
+            char ch = CURSOR_ROWS[r][c];
+            int x = hx + c;
+            if (ch == '.' || x >= g_fw) continue;
+            Uint32 p = f[y * g_fw + x] & 0xFFFFFF;
+            if (p != (ch == 'W' ? 0xFFFFFFu : 0u)) return 0;
+            n++;
+        }
+    }
+    return n;
+}
+
+/* Copy the frame for display. While the pointer is parked, find the cursor in
+ * the bottom-right corner and paint it out with the colours beside it. */
+static void update_display(void)
+{
+    if (!g_frame || g_disp_serial == g_frame_serial) return;
+    static int cap;
+    if (!g_disp || cap != g_fw * g_fh) { SDL_free(g_disp); cap = g_fw * g_fh; g_disp = (Uint32 *)SDL_malloc((size_t)cap * 4); }
+    SDL_memcpy(g_disp, g_frame, (size_t)cap * 4);
+    g_disp_serial = g_frame_serial;
+    if (!g_parked || !cfg_int("hide_parked_cursor", 1) || g_fw != 320) return;
+    int bx = -1, by = -1, best = 3;
+    for (int hy = 150; hy < g_fh; hy++)
+        for (int hx = 270; hx < g_fw; hx++) {
+            int n = cursor_at(g_frame, hx, hy);
+            if (n > best) { best = n; bx = hx; by = hy; }
+        }
+    if (bx < 0) return;
+    for (int r = 0; CURSOR_ROWS[r] && by + r < g_fh; r++) {
+        int y = by + r, x0 = -1, x1 = -1;
+        for (int c = 0; CURSOR_ROWS[r][c]; c++)
+            if (CURSOR_ROWS[r][c] != '.' && bx + c < g_fw) { if (x0 < 0) x0 = bx + c; x1 = bx + c; }
+        if (x0 < 0) continue;
+        Uint32 fillc = x0 > 0 ? g_frame[y * g_fw + x0 - 1] : (x1 + 1 < g_fw ? g_frame[y * g_fw + x1 + 1] : 0);
+        for (int x = x0; x <= x1; x++) g_disp[y * g_fw + x] = fillc;
     }
 }
 
@@ -1153,19 +1211,19 @@ static const char *ACTION_NAMES[A_COUNT] = {
     "top", "bottom", "pan_left", "pan_right", "zoom", "disk", "right_click", "keyboard", "shift", "enter", "escape",
     "hotkey", "swap_screens"
 };
-/* Defaults for the RG DS on ROCKNIX: SDL's a/b/x/y match the labels printed
- * on the buttons (A right, B bottom, X top, Y left). */
+/* Defaults for the RG DS on ROCKNIX. SDL names: a = bottom button (B),
+ * b = right button (A), x = top button (X), y = left button (Y). */
 static const char *ACTION_DEFAULTS[A_COUNT] = {
     "dpup,x",                        /* top half: D-pad up or X */
-    "dpdown,b",                      /* bottom half: D-pad down or B */
-    "leftshoulder,rightshoulder",    /* L1 / R1 pan left */
-    "lefttrigger,righttrigger",      /* L2 / R2 pan right */
-    "y",                             /* Y: cycle game zoom */
+    "dpdown,a",                      /* bottom half: D-pad down or B */
+    "lefttrigger,righttrigger",      /* pan left */
+    "leftshoulder,rightshoulder",    /* pan right */
+    "y,dpleft",                      /* Y or D-pad left: cycle game zoom */
     "start",                         /* Start: click the floppy disk */
-    "a",                             /* hold A + tap = right click */
+    "rightstick",                    /* hold R3 + tap = right click (or tap with two fingers) */
     "back",                          /* Select: on-screen keyboard */
-    "dpleft",                        /* hold D-pad left: Shift (vertical walls) */
-    "dpright",                       /* hold D-pad right: Enter */
+    "b,dpright",                     /* hold A or D-pad right: Shift (vertical walls) */
+    "",                              /* Enter: on-screen keyboard */
     "leftstick",                     /* L3, if present: Escape (stop sorts, skip animations) */
     "guide",                         /* Menu button as hotkey */
     "",
@@ -1285,6 +1343,10 @@ static float g_stick[2];
 static void update_continuous(float dt)
 {
     Uint32 now = SDL_GetTicks();
+    if (g_held[A_QUITMOD] && now - g_held_since[A_QUITMOD] > (Uint32)cfg_int("home_hold_ms", 1000)) {
+        SDL_Log("home button held: quitting");
+        g_running = 0;
+    }
     if (is_play_mode() && g_view != VIEW_FULL) {
         float speed = cfg_float("pan_speed", 240); /* frame px per second */
         float dir = 0;
@@ -1303,7 +1365,7 @@ static void update_continuous(float dt)
         float sp = cfg_float("stick_speed", 160) * dt;
         float nx = clampf(g_ptr_x + g_stick[0] * sp, 0, (float)g_fw - 1);
         float ny = clampf(g_ptr_y + g_stick[1] * sp * 0.83f, 0, (float)g_fh - 1);
-        if (q_empty()) { g_ptr_x = nx; g_ptr_y = ny; }
+        if (q_empty()) { g_ptr_x = nx; g_ptr_y = ny; g_parked = 0; }
     }
 }
 
@@ -1342,6 +1404,12 @@ static void touch_down(float nx, float ny)
         int vx = (int)(nx * s->vp.w), vy = (int)(ny * s->vp.h);
         if (osk_tap(vx, vy)) { g_touch_down = 1; g_touch_in_osk = 1; return; }
     }
+    /* First run only: hold taps during the intro until the title card has
+     * been seen once, so the desk can show it on the top screen */
+    if (!g_title && g_mode == MODE_OTHER && !g_desk_seen && !SDL_strncasecmp(g_prog, "UNS_PLOT", 8) && cfg_int("desk_title", 1)) {
+        g_touch_down = 1; g_touch_in_osk = 1;
+        return;
+    }
     /* The credits after EXIT TO DOS only respond to Escape */
     if (g_mode == MODE_CONSOLE && g_credits) {
         tap_key(RETROK_ESCAPE);
@@ -1368,6 +1436,15 @@ static void touch_move(float nx, float ny)
     bottom_to_frame(nx, ny, &fx, &fy);
     if (q_empty()) { g_ptr_x = fx; g_ptr_y = fy; }
     else q_push(EV_MOVE, fx, fy, 0);
+}
+
+/* a second finger landed: make this touch a right click if the press hasn't
+ * reached the game yet */
+static void touch_second_finger(void)
+{
+    if (!g_touch_down || g_touch_in_osk || g_touch_btn == 1) return;
+    for (int i = g_qh; i != g_qt; i = (i + 1) % QMAX)
+        if (g_q[i].type == EV_DOWN) { g_q[i].a = 1; g_touch_btn = 1; return; }
 }
 
 static void touch_up(void)
@@ -1456,6 +1533,7 @@ static void evdev_poll(void)
             if (ev[i].type == 3) { /* EV_ABS */
                 static int slot = 0;
                 if (ev[i].code == 0x2f) slot = ev[i].value;                    /* ABS_MT_SLOT */
+                else if (slot == 1 && ev[i].code == 0x39 && ev[i].value >= 0) touch_second_finger();
                 else if (slot == 0 && ev[i].code == 0x35) g_ev_cur[0] = ev[i].value;
                 else if (slot == 0 && ev[i].code == 0x36) g_ev_cur[1] = ev[i].value;
                 else if (slot == 0 && ev[i].code == 0x39) g_ev_touch = ev[i].value >= 0; /* TRACKING_ID */
@@ -1555,6 +1633,7 @@ static void script_step(void)
         else if (!SDL_strcmp(cmd, "touchdown")) touch_down(SDL_atoi(a1) / 1024.0f, SDL_atoi(a2) / 768.0f);
         else if (!SDL_strcmp(cmd, "touchmove")) touch_move(SDL_atoi(a1) / 1024.0f, SDL_atoi(a2) / 768.0f);
         else if (!SDL_strcmp(cmd, "touchup")) touch_up();
+        else if (!SDL_strcmp(cmd, "finger2")) touch_second_finger();
         else if (!SDL_strcmp(cmd, "press")) { int a = action_from_name(a1); if (a >= 0) action_set(a, 1); }
         else if (!SDL_strcmp(cmd, "release")) { int a = action_from_name(a1); if (a >= 0) action_set(a, 0); }
         else if (!SDL_strcmp(cmd, "action")) { int a = action_from_name(a1); if (a >= 0) { action_set(a, 1); action_set(a, 0); } }
@@ -1564,8 +1643,8 @@ static void script_step(void)
         else if (!SDL_strcmp(cmd, "shot")) { SDL_strlcpy(g_pending_shot, a1, sizeof g_pending_shot); return; }
         else if (!SDL_strcmp(cmd, "frame")) save_frame(a1);
         else if (!SDL_strcmp(cmd, "pan")) { if (g_view != VIEW_FULL) g_pan[g_view] = g_pan_target[g_view] = clampf((float)SDL_atof(a1), 0, max_pan(g_view)); }
-        else if (!SDL_strcmp(cmd, "info")) SDL_Log("info: credits=%d mode=%s prog=%s view=%d pan=%.1f layout=%d zoom=%d ptr=%.1f,%.1f frame=%dx%d",
-                                                   g_credits, MODE_NAMES[g_mode], g_prog, g_view, g_pan[g_view], detect_layout(), detect_zoom(detect_layout()), g_ptr_x, g_ptr_y, g_fw, g_fh);
+        else if (!SDL_strcmp(cmd, "info")) SDL_Log("info: btn=%d%d credits=%d mode=%s prog=%s view=%d pan=%.1f layout=%d zoom=%d ptr=%.1f,%.1f frame=%dx%d",
+                                                   g_btn[0], g_btn[1], g_credits, MODE_NAMES[g_mode], g_prog, g_view, g_pan[g_view], detect_layout(), detect_zoom(detect_layout()), g_ptr_x, g_ptr_y, g_fw, g_fh);
         else if (!SDL_strcmp(cmd, "quit")) { g_running = 0; return; }
         else SDL_Log("script: unknown command '%s'", cmd);
     }
@@ -1762,6 +1841,7 @@ static void handle_event(SDL_Event *e)
     case SDL_FINGERMOTION:
     case SDL_FINGERUP:
         if (g_evfd >= 0 || g_single_window) break; /* evdev is authoritative */
+        if (e->type == SDL_FINGERDOWN && g_touch_down) { touch_second_finger(); break; }
         if (e->tfinger.fingerId != 0 && e->type != SDL_FINGERUP && g_touch_down) break;
         if (e->type == SDL_FINGERDOWN) touch_down(e->tfinger.x, e->tfinger.y);
         else if (e->type == SDL_FINGERMOTION) touch_move(e->tfinger.x, e->tfinger.y);
@@ -1944,11 +2024,12 @@ int main(int argc, char **argv)
             if (g_inject_park && q_empty()) { g_inject_park = 0; park_later(cfg_int("park_delay_frames", 45)); }
             if (g_park_due && g_frame_no >= g_park_due && q_empty() && !g_touch_down) {
                 if (!game_menu_open() && SDL_fabsf(g_stick[0]) < 0.2f && SDL_fabsf(g_stick[1]) < 0.2f) {
-                    q_push(EV_MOVE, ux(cfg_float("park_x", 319)), uy(cfg_float("park_y", 199)), 0);
+                    q_push(EV_MOVE, ux(cfg_float("park_x", 319)), uy(cfg_float("park_y", 199)), 1);
                     g_park_due = 0;
                 }
             }
         }
+        update_display();
         update_viewports();
         for (int i = 0; i < 2; i++) {
             if (g_single_window && i == 1) break;

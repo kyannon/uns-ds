@@ -8,7 +8,9 @@ Outside the lab and battle, the layout follows what the game is showing:
 - **Desk** (main menu): the desk on the touch screen and the title card on the top screen.
 - **Briefings and credits**: the picture monitor on the top screen and the text monitor on the touch screen, each with its bezel.
 
-The pointer moves out of the way shortly after each tap. The game draws its own cursor, so this keeps it off the picture.
+Shortly after each tap the pointer moves to the bottom-right corner and the game's cursor is painted out, so the picture stays clear.
+
+The desk's title card is grabbed from the intro. On the very first run, taps during the intro wait until the title has appeared once.
 
 The game runs in DOSBox Pure. This port uses the copy built into ROCKNIX.
 
@@ -23,25 +25,25 @@ The game runs in DOSBox Pure. This port uses the copy built into ROCKNIX.
 | Button | Action |
 |---|---|
 | Tap / drag (bottom screen) | Left mouse button |
-| Hold **A** + tap | Right mouse button (scroll at Zoom 2, fast-load cargo, fast-transfer in the Database) |
+| Tap with two fingers | Right mouse button (scroll at Zoom 2, fast-load cargo, fast-transfer in the Database). Holding **R3** while tapping also works |
 | **D-pad ▲** or **X** | Top half · press again for full screen |
 | **D-pad ▼** or **B** | Bottom half · press again for full screen |
-| **L1** / **R1** | Pan left (hold to scroll) |
-| **L2** / **R2** | Pan right (hold to scroll) |
-| **Y** | Next zoom level (clicks the game's own Zoom 1/2/3 buttons) |
+| **L2** / **R2** | Pan left (hold to scroll) |
+| **L1** / **R1** | Pan right (hold to scroll) |
+| **Y** or **D-pad ◀** | Next zoom level (clicks the game's own Zoom 1/2/3 buttons) |
+| Hold **A** or **D-pad ▶** | Shift (vertical walls) |
 | **Start** | Click the floppy drive (File / Options / Variables / Battle menus) |
-| **Select** | On-screen keyboard (for naming saves) |
-| Hold **D-pad ◀** | Shift (vertical walls) |
-| Hold **D-pad ▶** | Enter (slow cargo loading) |
+| **Select** | On-screen keyboard (for naming saves; also has Enter and Esc) |
 | **L3** (if fitted) | Escape (stop a sort, skip animations) |
+| Hold **Home** | Quit |
 | **Select + Start** | Quit |
-| **Menu + Select** | Swap the screens |
+| **Home + Select** | Swap the screens |
 
 Zoom 3 only works once a creature is selected. If the game ignores it, the next **Y** press goes back to Zoom 1.
 
 Saves go into `gamedata/save/`, like on the original PC. File > Exit in the game returns to the desk.
 
-To leave, click the keyboard on the desk and choose EXIT. Tap once during the credits to skip them, and the port closes. **Select + Start** quits at any time.
+To leave, click the keyboard on the desk and choose EXIT. Tap once during the credits to skip them, and the port closes. Holding **Home** or pressing **Select + Start** quits at any time.
 
 ## Settings
 
