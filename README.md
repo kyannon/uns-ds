@@ -10,7 +10,11 @@ The original DOS game runs in DOSBox Pure. `usds` is a small libretro frontend, 
 
 See [`port/unnaturalselection/README.md`](port/unnaturalselection/README.md) for installing and the control layout.
 
-![Port captures](docs/screens/port_screens.png)
+![Lab and battle](docs/screens/port_screens.png)
+
+Outside the lab and battle the layout follows the game: the title card stays on the top screen over the desk, and briefings and credits put the picture monitor on top and the text monitor below.
+
+![Desk, briefing and credits](docs/screens/story_screens.png)
 
 ## Layout
 
