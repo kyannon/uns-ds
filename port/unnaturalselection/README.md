@@ -25,21 +25,18 @@ The game runs in DOSBox Pure. This port uses the copy built into ROCKNIX.
 | Button | Action |
 |---|---|
 | Tap / drag (bottom screen) | Left mouse button |
-| Tap with two fingers | Right mouse button (scroll at Zoom 2, fast-load cargo, fast-transfer in the Database). Holding **R3** while tapping also works |
+| Hold **A** + tap, or tap with two fingers | Right mouse button (scroll at Zoom 2, fast-load cargo, fast-transfer in the Database) |
 | **D-pad ▲** or **X** | Top half · press again for full screen |
 | **D-pad ▼** or **B** | Bottom half · press again for full screen |
-| **L2** / **R2** | Pan left (hold to scroll) |
-| **L1** / **R1** | Pan right (hold to scroll) |
-| **Y** or **D-pad ◀** | Next zoom level (clicks the game's own Zoom 1/2/3 buttons) |
-| Hold **A** or **D-pad ▶** | Shift (vertical walls) |
+| **L1** / **R1** | Pan left (hold to scroll) |
+| **L2** / **R2** | Pan right (hold to scroll) |
+| Hold **Y** or **D-pad ▶** | Shift (vertical walls) |
 | **Start** | Click the floppy drive (File / Options / Variables / Battle menus) |
 | **Select** | On-screen keyboard (for naming saves; also has Enter and Esc) |
 | **L3** (if fitted) | Escape (stop a sort, skip animations) |
 | Hold **Home** | Quit |
 | **Select + Start** | Quit |
 | **Home + Select** | Swap the screens |
-
-Zoom 3 only works once a creature is selected. If the game ignores it, the next **Y** press goes back to Zoom 1.
 
 Saves go into `gamedata/save/`, like on the original PC. File > Exit in the game returns to the desk.
 

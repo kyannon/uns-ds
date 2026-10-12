@@ -1156,31 +1156,6 @@ static void park_later(int frames)
 {
     if (cfg_int("park_pointer", 1)) g_park_due = g_frame_no + frames;
 }
-static int g_zoom_guess = 0, g_zoom_last_target = -1, g_zoom_last_seen = -1;
-
-static void action_zoom(void)
-{
-    int layout = detect_layout();
-    if (layout < 0) layout = g_last_layout;
-    if (layout < 0) { osd("NO ZOOM HERE"); return; }
-    int cur = detect_zoom(layout);
-    if (cur < 0) cur = g_zoom_guess;
-    int target = (cur + 1) % 3;
-    /* if the last press didn't take (e.g. a zoom level that isn't allowed
-     * right now), skip past it */
-    /* Zoom 3 needs a selected creature; if asking for it didn't take, go on
-     * to Zoom 1. (Other presses can just be early: the game ignores clicks for
-     * a moment after a zoom change, so those are simply retried.) */
-    if (cur == g_zoom_last_seen && g_zoom_last_target == 2 && target == 2) target = 0;
-    g_zoom_last_seen = cur;
-    g_zoom_last_target = target;
-    g_zoom_guess = target;
-    inject_click(ux(ZOOM_BTN[layout][target][0]), uy(ZOOM_BTN[layout][target][1]), 0);
-    char m[32];
-    SDL_snprintf(m, sizeof m, "ZOOM %d", target + 1);
-    osd(m);
-}
-
 static void action_disk(void)
 {
     inject_click(ux(DISK_POS[0]), uy(DISK_POS[1]), 0);
@@ -1204,11 +1179,11 @@ static void action_half(int half)
 /* ========================================================================== */
 
 enum {
-    A_TOP, A_BOTTOM, A_PANL, A_PANR, A_ZOOM, A_DISK, A_RIGHTMOD, A_OSK, A_SHIFT, A_RETURN, A_ESCAPE,
+    A_TOP, A_BOTTOM, A_PANL, A_PANR, A_DISK, A_RIGHTMOD, A_OSK, A_SHIFT, A_RETURN, A_ESCAPE,
     A_QUITMOD, A_SWAP, A_COUNT
 };
 static const char *ACTION_NAMES[A_COUNT] = {
-    "top", "bottom", "pan_left", "pan_right", "zoom", "disk", "right_click", "keyboard", "shift", "enter", "escape",
+    "top", "bottom", "pan_left", "pan_right", "disk", "right_click", "keyboard", "shift", "enter", "escape",
     "hotkey", "swap_screens"
 };
 /* Defaults for the RG DS on ROCKNIX. SDL names: a = bottom button (B),
@@ -1216,13 +1191,12 @@ static const char *ACTION_NAMES[A_COUNT] = {
 static const char *ACTION_DEFAULTS[A_COUNT] = {
     "dpup,x",                        /* top half: D-pad up or X */
     "dpdown,a",                      /* bottom half: D-pad down or B */
-    "lefttrigger,righttrigger",      /* pan left */
-    "leftshoulder,rightshoulder",    /* pan right */
-    "y,dpleft",                      /* Y or D-pad left: cycle game zoom */
+    "leftshoulder,rightshoulder",    /* L1 / R1: pan left */
+    "lefttrigger,righttrigger",      /* L2 / R2: pan right */
     "start",                         /* Start: click the floppy disk */
-    "rightstick",                    /* hold R3 + tap = right click (or tap with two fingers) */
+    "b",                             /* hold A + tap = right click (or tap with two fingers) */
     "back",                          /* Select: on-screen keyboard */
-    "b,dpright",                     /* hold A or D-pad right: Shift (vertical walls) */
+    "y,dpright",                     /* hold Y or D-pad right: Shift (vertical walls) */
     "",                              /* Enter: on-screen keyboard */
     "leftstick",                     /* L3, if present: Escape (stop sorts, skip animations) */
     "guide",                         /* Menu button as hotkey */
@@ -1284,7 +1258,6 @@ static void action_press(int a)
             g_pan_at = SDL_GetTicks();
         }
         break;
-    case A_ZOOM: if (is_play_mode()) action_zoom(); break;
     case A_DISK:
         if (g_held[A_OSK]) { g_running = 0; return; }       /* select + start: quit */
         action_disk();
@@ -1881,7 +1854,6 @@ static void handle_event(SDL_Event *e)
         case SDLK_F2: a = A_BOTTOM; break;
         case SDLK_F3: a = A_PANL; break;
         case SDLK_F4: a = A_PANR; break;
-        case SDLK_F5: a = A_ZOOM; break;
         case SDLK_F6: a = A_DISK; break;
         case SDLK_F7: a = A_OSK; break;
         case SDLK_F8: a = A_RIGHTMOD; break;
