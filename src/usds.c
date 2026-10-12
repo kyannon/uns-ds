@@ -1195,12 +1195,12 @@ static const char *ACTION_DEFAULTS[A_COUNT] = {
     "dpdown,a",                      /* bottom half: D-pad down or B */
     "leftshoulder,rightshoulder",    /* L1 / R1: pan left */
     "lefttrigger,righttrigger",      /* L2 / R2: pan right */
-    "start",                         /* Start: click the floppy disk */
+    "start,leftstick",               /* Start or L3: click the floppy disk */
     "b,dpright",                     /* hold A or D-pad right + tap = right click (or tap with two fingers) */
-    "back",                          /* Select: on-screen keyboard */
+    "back,key:F1,BTN_BACK",          /* Select or BACK: on-screen keyboard (ROCKNIX sends BACK as F1) */
     "y,dpleft",                      /* hold Y or D-pad left: Shift (vertical walls) */
     "",                              /* Enter: on-screen keyboard */
-    "leftstick",                     /* L3, if present: Escape (stop sorts, skip animations) */
+    "",                              /* Escape: on-screen keyboard */
     "guide",                         /* Menu button as hotkey */
     "",
 };
@@ -1211,6 +1211,34 @@ static int g_nbind[A_COUNT];
 static int g_held[A_COUNT];
 static Uint32 g_held_since[A_COUNT];
 static int g_pad_btn[SDL_CONTROLLER_BUTTON_MAX + 2];
+
+/* Input ids: SDL controller buttons (0..), triggers (100+axis), keyboard
+ * scancodes (ID_KEY+scancode) and raw evdev key codes (ID_EVDEV+code). */
+#define ID_KEY   0x10000
+#define ID_EVDEV 0x20000
+
+static int evdev_code_from_name(const char *t)
+{
+    if (!SDL_strncmp(t, "evdev:", 6)) t += 6;
+    static const struct { const char *n; int c; } names[] = {
+        {"BTN_BACK", 0x116}, {"BTN_MODE", 0x13c}, {"BTN_SELECT", 0x13a}, {"BTN_START", 0x13b},
+        {"KEY_PLAYPAUSE", 164}, {"KEY_BACK", 158}, {"KEY_HOMEPAGE", 172}, {NULL, 0}};
+    for (int i = 0; names[i].n; i++) if (!SDL_strcasecmp(t, names[i].n)) return names[i].c;
+    return SDL_atoi(t);
+}
+
+/* held state of inputs that aren't SDL controller buttons or triggers */
+static struct { int id, down; } g_other_held[16];
+static int other_held(int id)
+{
+    for (int i = 0; i < 16; i++) if (g_other_held[i].id == id) return g_other_held[i].down;
+    return 0;
+}
+static void set_other_held(int id, int down)
+{
+    for (int i = 0; i < 16; i++) if (g_other_held[i].id == id) { g_other_held[i].down = down; return; }
+    for (int i = 0; i < 16; i++) if (!g_other_held[i].id) { g_other_held[i].id = id; g_other_held[i].down = down; return; }
+}
 
 static void binds_init(void)
 {
@@ -1223,6 +1251,16 @@ static void binds_init(void)
         for (char *t = SDL_strtokr(buf, ", ", &save); t && g_nbind[a] < MAXB; t = SDL_strtokr(NULL, ", ", &save)) {
             if (!SDL_strcmp(t, "lefttrigger")) g_bind[a][g_nbind[a]++] = 100 + SDL_CONTROLLER_AXIS_TRIGGERLEFT;
             else if (!SDL_strcmp(t, "righttrigger")) g_bind[a][g_nbind[a]++] = 100 + SDL_CONTROLLER_AXIS_TRIGGERRIGHT;
+            else if (!SDL_strncmp(t, "key:", 4)) {
+                SDL_Scancode sc = SDL_GetScancodeFromName(t + 4);
+                if (sc != SDL_SCANCODE_UNKNOWN) g_bind[a][g_nbind[a]++] = ID_KEY + sc;
+                else SDL_Log("config: unknown key '%s' for %s", t + 4, key);
+            }
+            else if (!SDL_strncmp(t, "evdev:", 6) || !SDL_strncmp(t, "BTN_", 4) || !SDL_strncmp(t, "KEY_", 4)) {
+                int code = evdev_code_from_name(t);
+                if (code > 0) g_bind[a][g_nbind[a]++] = ID_EVDEV + code;
+                else SDL_Log("config: unknown input code '%s' for %s", t, key);
+            }
             else {
                 SDL_GameControllerButton b = SDL_GameControllerGetButtonFromString(t);
                 if (b != SDL_CONTROLLER_BUTTON_INVALID) g_bind[a][g_nbind[a]++] = b;
@@ -1295,8 +1333,16 @@ static void action_set(int a, int down)
 }
 
 /* button id (or 100+axis) changed: update every action bound to it */
+static int input_bound(int id)
+{
+    for (int a = 0; a < A_COUNT; a++)
+        for (int i = 0; i < g_nbind[a]; i++) if (g_bind[a][i] == id) return 1;
+    return 0;
+}
+
 static void pad_input(int id, int down)
 {
+    if (id >= ID_KEY) set_other_held(id, down);
     for (int a = 0; a < A_COUNT; a++)
         for (int i = 0; i < g_nbind[a]; i++)
             if (g_bind[a][i] == id) {
@@ -1306,7 +1352,7 @@ static void pad_input(int id, int down)
                     for (int j = 0; j < g_nbind[a]; j++) {
                         int o = g_bind[a][j];
                         if (o == id) continue;
-                        if (o >= 100 ? g_trigger_state[o - 100 - SDL_CONTROLLER_AXIS_TRIGGERLEFT] : g_pad_btn[o]) any = 1;
+                        if (o >= ID_KEY ? other_held(o) : o >= 100 ? g_trigger_state[o - 100 - SDL_CONTROLLER_AXIS_TRIGGERLEFT] : g_pad_btn[o]) any = 1;
                     }
                 action_set(a, any);
             }
@@ -1525,9 +1571,52 @@ static void evdev_poll(void)
         }
     }
 }
+/* Extra buttons read straight from the kernel (e.g. the RG DS BACK key),
+ * for bindings written as BTN_BACK / evdev:CODE. Works when no other
+ * process has grabbed the device; otherwise the key:… binding covers it. */
+static int g_keyfd[8], g_nkeyfd;
+static void evkeys_open(void)
+{
+    int want[32], nwant = 0;
+    for (int a = 0; a < A_COUNT; a++)
+        for (int i = 0; i < g_nbind[a]; i++)
+            if (g_bind[a][i] >= ID_EVDEV && nwant < 32) want[nwant++] = g_bind[a][i] - ID_EVDEV;
+    if (!nwant) return;
+    for (int i = 0; i < 32 && g_nkeyfd < 8; i++) {
+        char path[64];
+        SDL_snprintf(path, sizeof path, "/dev/input/event%d", i);
+        int fd = open(path, O_RDONLY_ | O_NONBLOCK_);
+        if (fd < 0) continue;
+        if (fd == g_evfd) { close(fd); continue; }
+        unsigned char keybits[96] = {0};
+        char name[128] = "";
+        ioctl(fd, EVIOCGBIT_(1, sizeof keybits), keybits);
+        ioctl(fd, EVIOCGNAME_(sizeof name), name);
+        int hit = 0;
+        for (int w = 0; w < nwant; w++) if (want[w] < 768 && test_bit(keybits, want[w])) hit = 1;
+        if (!hit) { close(fd); continue; }
+        g_keyfd[g_nkeyfd++] = fd;
+        SDL_Log("input: reading extra buttons from %s '%s'", path, name);
+    }
+}
+static void evkeys_poll(void)
+{
+    struct { long sec, usec; unsigned short type, code; int value; } ev[32];
+    for (int f = 0; f < g_nkeyfd; f++) {
+        long n;
+        while ((n = read(g_keyfd[f], ev, sizeof ev)) > 0)
+            for (int i = 0; i < (int)(n / sizeof ev[0]); i++)
+                if (ev[i].type == 1 && ev[i].value != 2) {
+                    int id = ID_EVDEV + ev[i].code;
+                    if (input_bound(id)) pad_input(id, ev[i].value != 0);
+                }
+    }
+}
 #else
 static void evdev_open(void) {}
 static void evdev_poll(void) {}
+static void evkeys_open(void) {}
+static void evkeys_poll(void) {}
 #endif
 
 /* ========================================================================== */
@@ -1609,6 +1698,13 @@ static void script_step(void)
         else if (!SDL_strcmp(cmd, "touchmove")) touch_move(SDL_atoi(a1) / 1024.0f, SDL_atoi(a2) / 768.0f);
         else if (!SDL_strcmp(cmd, "touchup")) touch_up();
         else if (!SDL_strcmp(cmd, "finger2")) touch_second_finger();
+        else if (!SDL_strcmp(cmd, "sdlkey")) { /* push a real key press+release through SDL */
+            SDL_Event ev; SDL_zero(ev);
+            ev.type = SDL_KEYDOWN; ev.key.keysym.scancode = SDL_GetScancodeFromName(a1);
+            ev.key.keysym.sym = SDL_GetKeyFromScancode(ev.key.keysym.scancode); ev.key.state = SDL_PRESSED;
+            SDL_PushEvent(&ev);
+            ev.type = SDL_KEYUP; ev.key.state = SDL_RELEASED; SDL_PushEvent(&ev);
+        }
         else if (!SDL_strcmp(cmd, "press")) { int a = action_from_name(a1); if (a >= 0) action_set(a, 1); }
         else if (!SDL_strcmp(cmd, "release")) { int a = action_from_name(a1); if (a >= 0) action_set(a, 0); }
         else if (!SDL_strcmp(cmd, "action")) { int a = action_from_name(a1); if (a >= 0) { action_set(a, 1); action_set(a, 0); } }
@@ -1800,7 +1896,10 @@ static void handle_event(SDL_Event *e)
     case SDL_CONTROLLERBUTTONDOWN:
     case SDL_CONTROLLERBUTTONUP: {
         int b = e->cbutton.button, d = e->type == SDL_CONTROLLERBUTTONDOWN;
-        if (b >= 0 && b < SDL_CONTROLLER_BUTTON_MAX) { g_pad_btn[b] = d; pad_input(b, d); }
+        if (b >= 0 && b < SDL_CONTROLLER_BUTTON_MAX) {
+            if (d && !input_bound(b)) SDL_Log("input: pad button %s (not bound)", SDL_GameControllerGetStringForButton((SDL_GameControllerButton)b));
+            g_pad_btn[b] = d; pad_input(b, d);
+        }
         break;
     }
     case SDL_CONTROLLERAXISMOTION: {
@@ -1850,9 +1949,11 @@ static void handle_event(SDL_Event *e)
         int d = e->type == SDL_KEYDOWN;
         if (e->key.repeat) break;
         SDL_Keycode k = e->key.keysym.sym;
+        int kid = ID_KEY + e->key.keysym.scancode;
+        if (input_bound(kid)) { pad_input(kid, d); break; }
+        if (d) SDL_Log("input: key %s (not bound)", SDL_GetScancodeName(e->key.keysym.scancode));
         int a = -1;
         switch (k) {
-        case SDLK_F1: a = A_TOP; break;
         case SDLK_F2: a = A_BOTTOM; break;
         case SDLK_F3: a = A_PANL; break;
         case SDLK_F4: a = A_PANR; break;
@@ -1950,6 +2051,7 @@ int main(int argc, char **argv)
     if (!g_single_window || cfg_int("hide_cursor", 0)) SDL_ShowCursor(SDL_DISABLE);
     binds_init();
     evdev_open();
+    evkeys_open();
     title_load();
     g_title_captured = g_title != NULL;
 
@@ -1975,6 +2077,7 @@ int main(int argc, char **argv)
         SDL_Event e;
         while (SDL_PollEvent(&e)) handle_event(&e);
         evdev_poll();
+        evkeys_poll();
 
         Uint64 now = SDL_GetPerformanceCounter();
         double dt = (double)(now - last) / freq;

@@ -33,9 +33,8 @@ Each action is on both sides of the device (D-pad side and face-button side), so
 | **L1** / **R1** | Pan left (hold to scroll) |
 | **L2** / **R2** | Pan right (hold to scroll) |
 | Hold **Y** or **D-pad ◀** | Shift (vertical walls) |
-| **Start** | Click the floppy drive (File / Options / Variables / Battle menus) |
-| **Select** | On-screen keyboard (for naming saves; also has Enter and Esc) |
-| **L3** (if fitted) | Escape (stop a sort, skip animations) |
+| **Start** or **L3** | Click the floppy drive (File / Options / Variables / Battle menus) |
+| **Select** or **BACK** | On-screen keyboard (for naming saves; also has Enter and Esc) |
 | Hold **Home** | Quit |
 | **Select + Start** | Quit |
 | **Home + Select** | Swap the screens |
@@ -48,7 +47,7 @@ To leave, click the keyboard on the desk and choose EXIT. Tap once during the cr
 
 All settings are in `usds.cfg`: the slice row, pan speed, scaling, button bindings, pointer parking and touch orientation. If touch lands in the wrong place, try `touch_swap_xy`, `touch_invert_x` and `touch_invert_y`. If the two screens come up the wrong way round, set `swap_screens = 1`, or set `USDS_SWAP_OUTPUTS=1` in the launcher.
 
-`log.txt` is written on each run. It lists the outputs, the touch device that was picked and the controller name, which is the first thing to check when something misbehaves.
+`log.txt` is written on each run. It lists the outputs, the touch device that was picked, the controller name and any button press that isn't bound to anything, which is the first thing to check when something misbehaves.
 
 ## Building
 
