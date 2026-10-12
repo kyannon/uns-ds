@@ -1,0 +1,6 @@
+build/
+*.o
+port/unnaturalselection/usds
+port/unnaturalselection/log.txt
+port/unnaturalselection/gamedata/*
+!port/unnaturalselection/gamedata/PUT_GAME_FILES_HERE.txt

@@ -1,0 +1,1 @@
+Copy the DOS game files into this folder.
