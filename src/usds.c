@@ -1225,8 +1225,19 @@ static void action_disk(void)
     osd("DISK DRIVE");
 }
 
+/* last half view shown, so a switch to the other half keeps the same place */
+static int g_last_half = VIEW_FULL;
+
 static void set_view(int v)
 {
+    /* The halves have different widths of panning room (they're cut at row
+     * 120, not 100), so carry the pan over as a fraction of that room. */
+    if (v != VIEW_FULL && g_last_half != VIEW_FULL && g_last_half != v && cfg_int("match_pan", 1)) {
+        float from = max_pan(g_last_half), to = max_pan(v);
+        float frac = from > 0 ? g_pan_target[g_last_half] / from : 0;
+        g_pan[v] = g_pan_target[v] = clampf(frac, 0, 1) * to;
+    }
+    if (v != VIEW_FULL) g_last_half = v;
     g_view = v;
     g_view_changed_at = SDL_GetTicks();
     osd(v == VIEW_TOP ? "TOP HALF" : v == VIEW_BOTTOM ? "BOTTOM HALF" : "FULL SCREEN");
