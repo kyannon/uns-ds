@@ -2,6 +2,14 @@
 
 The top screen shows the whole game. The bottom touch screen shows the whole game, its top half, or its bottom half, zoomed in so the buttons are easy to tap. A thin green bar along the bottom edge briefly shows where you are when you pan. The split falls at the top edge of the DigiLife floppy drive (row 120 of 200).
 
+Outside the lab and battle, the layout follows what the game is showing:
+
+- **Intro** (Maxis logo, title card): the same picture on both screens. Tap anywhere to skip ahead.
+- **Desk** (main menu): the desk on the touch screen and the title card on the top screen.
+- **Briefings and credits**: the picture monitor on the top screen and the text monitor on the touch screen, each with its bezel.
+
+The pointer moves out of the way shortly after each tap. The game draws its own cursor, so this keeps it off the picture.
+
 The game runs in DOSBox Pure. This port uses the copy built into ROCKNIX.
 
 ## Install
@@ -31,11 +39,13 @@ The game runs in DOSBox Pure. This port uses the copy built into ROCKNIX.
 
 Zoom 3 only works once a creature is selected. If the game ignores it, the next **Y** press goes back to Zoom 1.
 
-Saves go into `gamedata/save/`, like on the original PC. File > Exit in the game returns to the desk. Use **Select + Start** to leave the port.
+Saves go into `gamedata/save/`, like on the original PC. File > Exit in the game returns to the desk.
+
+To leave, click the keyboard on the desk and choose EXIT. Tap once during the credits to skip them, and the port closes. **Select + Start** quits at any time.
 
 ## Settings
 
-All settings are in `usds.cfg`: the slice row, pan speed, scaling, button bindings and touch orientation. If touch lands in the wrong place, try `touch_swap_xy`, `touch_invert_x` and `touch_invert_y`. If the two screens come up the wrong way round, set `swap_screens = 1`, or set `USDS_SWAP_OUTPUTS=1` in the launcher.
+All settings are in `usds.cfg`: the slice row, pan speed, scaling, button bindings, pointer parking and touch orientation. If touch lands in the wrong place, try `touch_swap_xy`, `touch_invert_x` and `touch_invert_y`. If the two screens come up the wrong way round, set `swap_screens = 1`, or set `USDS_SWAP_OUTPUTS=1` in the launcher.
 
 `log.txt` is written on each run. It lists the outputs, the touch device that was picked and the controller name, which is the first thing to check when something misbehaves.
 

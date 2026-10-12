@@ -15,6 +15,7 @@
 #include "SDL.h"
 #include "libretro.h"
 #include "font.h"
+#include "sigs.h"
 
 /* ---- the few libc calls we use directly (touch panel via evdev) ---------- */
 #ifdef __linux__
@@ -153,6 +154,26 @@ static struct {
 
 static char g_sysdir[1024], g_savedir[1024];
 
+/* DOS program currently running, from DOSBox Pure's status log */
+static char g_prog[32];
+static int g_game_started;
+static volatile int g_quit_request;
+
+static void note_program(const char *msg)
+{
+    const char *p = SDL_strstr(msg, "Program: ");
+    if (!p) return;
+    p += 9;
+    size_t n = 0;
+    while (p[n] && p[n] != ' ' && n < sizeof g_prog - 1) n++;
+    SDL_memcpy(g_prog, p, n);
+    g_prog[n] = 0;
+    if (!SDL_strncasecmp(g_prog, "UNS", 3)) g_game_started = 1;
+    /* The game has gone back to DOS: close the whole port instead of
+     * leaving the player at DOSBox's own menu. */
+    else if (g_game_started && cfg_int("exit_with_game", 1)) g_quit_request = 1;
+}
+
 /* core variables (DOSBox Pure options) */
 static const char *core_var_get(const char *key)
 {
@@ -168,6 +189,7 @@ static void core_log(enum retro_log_level level, const char *fmt, ...)
     va_end(ap);
     size_t n = SDL_strlen(buf);
     while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = 0;
+    note_program(buf);
     if (level >= RETRO_LOG_INFO || cfg_int("debug", 0)) SDL_Log("core: %s", buf);
 }
 
@@ -408,6 +430,8 @@ static void q_process(void)
     }
 }
 
+static int g_inject_park; /* an injected click wants the pointer parked afterwards */
+
 /* scripted click somewhere on the game screen. The pointer is left there by
  * default: the game can take a while to act on a click (e.g. at Zoom 2), and
  * moving the pointer away too soon makes the click land somewhere else. */
@@ -427,6 +451,7 @@ static void inject_click(float fx, float fy, int button)
         q_push(EV_WAIT, 0, 0, cfg_int("restore_delay_frames", 30));
         q_push(EV_RESTORE, 0, 0, 0);
     }
+    g_inject_park = 1;
 }
 
 static void tap_key(int key)
@@ -511,16 +536,58 @@ static float max_pan(int view)
     return SDL_max(0.0f, fw - s.w);
 }
 
+/* What the game is showing; decides how the two screens are laid out. */
+enum { MODE_OTHER, MODE_LAB, MODE_BATTLE, MODE_DESK, MODE_CONSOLE };
+static int g_mode = MODE_OTHER;
+static int is_play_mode(void) { return g_mode == MODE_LAB || g_mode == MODE_BATTLE; }
+
+static Uint32 frame_px(float gx, float gy)
+{
+    int x = clampi((int)ux(gx), 0, g_fw - 1), y = clampi((int)uy(gy), 0, g_fh - 1);
+    return g_frame[y * g_fw + x];
+}
+
+/* fit a region (game units) into the viewport, keeping the pixel shape */
+static void fit_region(float gx, float gy, float gw, float gh, int vw, int vh, FRect *src, FRect *dst)
+{
+    float pa = pixel_aspect();
+    src->x = ux(gx); src->y = uy(gy); src->w = ux(gw); src->h = uy(gh);
+    float dw = src->w * pa, dh = src->h;
+    float sc = SDL_min(vw / dw, vh / dh);
+    dst->w = dw * sc; dst->h = dh * sc;
+    dst->x = (vw - dst->w) / 2; dst->y = (vh - dst->h) / 2;
+}
+
+/* Briefing / credits console: picture monitor with its bezel on top, text
+ * monitor with its bezel on the bottom (game units, 320x200). */
+static const float CONSOLE_TOP[4] = {78, 6, 166, 104};
+static const float CONSOLE_BOTTOM[4] = {78, 112, 166, 88};
+
+/* geometry for one screen (role 0 = top, 1 = bottom) in the current mode */
+static void screen_geometry(int role, int vw, int vh, FRect *src, FRect *dst)
+{
+    if (g_mode == MODE_CONSOLE) {
+        const float *r = role ? CONSOLE_BOTTOM : CONSOLE_TOP;
+        fit_region(r[0], r[1], r[2], r[3], vw, vh, src, dst);
+        return;
+    }
+    view_geometry(role && is_play_mode() ? g_view : VIEW_FULL, vw, vh, src, dst);
+}
+
 /* ========================================================================== */
 /* screens / rendering                                                        */
 /* ========================================================================== */
 
 typedef struct {
     SDL_Renderer *ren;
-    SDL_Texture *frame_tex, *sharp_tex, *font_tex;
+    SDL_Texture *frame_tex, *sharp_tex, *font_tex, *title_tex;
     int tex_w, tex_h, sharp_k;
-    int uploaded_serial;
+    int uploaded_serial, title_serial;
 } RCtx;
+
+/* frozen title card for the top screen while the desk is showing */
+static Uint32 *g_title;
+static int g_title_w, g_title_h, g_title_serial;
 
 typedef struct {
     SDL_Window *win;
@@ -787,8 +854,25 @@ static void draw_screen(Screen *s)
     int vw = s->vp.w, vh = s->vp.h;
     int k = SDL_max(2, vh / 192);
     FRect src, dst;
-    int view = s->role == 0 ? VIEW_FULL : g_view;
-    view_geometry(view, vw, vh, &src, &dst);
+    if (g_mode == MODE_CONSOLE) {
+        /* letterbox with the console's own grey (follows the game's fades) */
+        Uint32 c = frame_px(3, 30);
+        fill(r, 0, 0, vw, vh, (c >> 16) & 255, (c >> 8) & 255, c & 255, 255);
+    }
+    if (s->role == 0 && g_mode == MODE_DESK && g_title && cfg_int("desk_title", 1)) {
+        if (!rc->title_tex || rc->title_serial != g_title_serial) {
+            if (rc->title_tex) SDL_DestroyTexture(rc->title_tex);
+            rc->title_tex = SDL_CreateTexture(rc->ren, SDL_PIXELFORMAT_RGB888, SDL_TEXTUREACCESS_STATIC, g_title_w, g_title_h);
+            SDL_SetTextureScaleMode(rc->title_tex, SDL_ScaleModeLinear);
+            SDL_UpdateTexture(rc->title_tex, NULL, g_title, g_title_w * 4);
+            rc->title_serial = g_title_serial;
+        }
+        view_geometry(VIEW_FULL, vw, vh, &src, &dst);
+        SDL_Rect d = {(int)dst.x, (int)dst.y, (int)dst.w, (int)dst.h};
+        SDL_RenderCopy(r, rc->title_tex, NULL, &d);
+        return;
+    }
+    screen_geometry(s->role, vw, vh, &src, &dst);
     draw_frame_region(rc, src, dst);
 
     if (s->role == 0) {
@@ -797,7 +881,7 @@ static void draw_screen(Screen *s)
 
     /* bottom screen overlays */
     Uint8 pa = fade_alpha(SDL_max(g_pan_at, g_view_changed_at), 1200, 500);
-    if (pa && g_view != VIEW_FULL) {
+    if (pa && is_play_mode() && g_view != VIEW_FULL) {
         float mp = max_pan(g_view);
         if (mp > 0) {
             int tw = vw / 2, tx = (vw - tw) / 2, ty = vh - 6 * k - (g_osk ? g_osk_area.h : 0), th = 2 * k;
@@ -822,12 +906,6 @@ static const float ZOOM_BTN[2][3][2] = {
     {{303, 49}, {303, 64}, {303, 79}},  /* battle */
 };
 static const float DISK_POS[2] = {310, 138};
-
-static Uint32 frame_px(float gx, float gy)
-{
-    int x = clampi((int)ux(gx), 0, g_fw - 1), y = clampi((int)uy(gy), 0, g_fh - 1);
-    return g_frame[y * g_fw + x];
-}
 
 /* classify the area around a zoom arrow: 2 = lit (bright green),
  * 1 = unlit (dark green), 0 = not an arrow */
@@ -868,6 +946,158 @@ static int detect_zoom(int layout)
 }
 
 static int g_last_layout = -1;
+
+/* average-colour 16x10 thumbnail of the current frame */
+static void frame_grid(unsigned char out[480])
+{
+    for (int gy = 0; gy < 10; gy++)
+        for (int gx = 0; gx < 16; gx++) {
+            int x0 = gx * g_fw / 16, x1 = (gx + 1) * g_fw / 16, y0 = gy * g_fh / 10, y1 = (gy + 1) * g_fh / 10;
+            unsigned r = 0, g = 0, b = 0, n = 0;
+            for (int y = y0; y < y1; y += 2)
+                for (int x = x0; x < x1; x += 2) {
+                    Uint32 p = g_frame[y * g_fw + x];
+                    r += (p >> 16) & 255; g += (p >> 8) & 255; b += p & 255; n++;
+                }
+            unsigned char *o = out + (gy * 16 + gx) * 3;
+            o[0] = (unsigned char)(r / n); o[1] = (unsigned char)(g / n); o[2] = (unsigned char)(b / n);
+        }
+}
+
+/* share of thumbnail cells that match a reference within a tolerance */
+static float grid_match(const unsigned char *a, const unsigned char *b)
+{
+    int ok = 0;
+    for (int i = 0; i < 480; i += 3) {
+        int d = SDL_abs(a[i] - b[i]) + SDL_abs(a[i + 1] - b[i + 1]) + SDL_abs(a[i + 2] - b[i + 2]);
+        if (d < 90) ok++;
+    }
+    return ok / 160.0f;
+}
+
+/* briefing/credits console: the four outer edges share one bluish grey */
+static int is_console(void)
+{
+    Uint32 c = frame_px(3, 30);
+    if (frame_px(3, 170) != c || frame_px(160, 3) != c || frame_px(160, 197) != c) return 0;
+    int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+    return b > r + 8 && SDL_abs(r - g) < 6 && r > 40;
+}
+
+static void title_save(void)
+{
+    char path[1100];
+    SDL_snprintf(path, sizeof path, "%s/title.bmp", g_savedir);
+    SDL_Surface *sf = SDL_CreateRGBSurfaceWithFormatFrom(g_title, g_title_w, g_title_h, 32, g_title_w * 4, SDL_PIXELFORMAT_RGB888);
+    if (sf) { if (SDL_SaveBMP(sf, path) == 0) SDL_Log("title card saved to %s", path); SDL_FreeSurface(sf); }
+}
+
+static void title_load(void)
+{
+    char path[1100];
+    SDL_snprintf(path, sizeof path, "%s/title.bmp", g_savedir);
+    SDL_Surface *raw = SDL_LoadBMP(path);
+    if (!raw) return;
+    SDL_Surface *sf = SDL_ConvertSurfaceFormat(raw, SDL_PIXELFORMAT_RGB888, 0);
+    SDL_FreeSurface(raw);
+    if (!sf) return;
+    g_title_w = sf->w; g_title_h = sf->h;
+    g_title = (Uint32 *)SDL_malloc((size_t)g_title_w * g_title_h * 4);
+    for (int y = 0; y < g_title_h; y++) SDL_memcpy(g_title + y * g_title_w, (Uint8 *)sf->pixels + y * sf->pitch, g_title_w * 4);
+    SDL_FreeSurface(sf);
+    g_title_serial++;
+    SDL_Log("title card loaded from %s", path);
+}
+
+/* during the credits the picture monitor always shows the game's logo */
+static int g_credits;
+static int is_credits_picture(void)
+{
+    int ok = 0;
+    for (int gy = 0; gy < 8; gy++)
+        for (int gx = 0; gx < 12; gx++) {
+            int x0 = (int)ux(89 + gx * 12), y0 = (int)uy(14 + gy * 89 / 8.0f);
+            int x1 = (int)ux(89 + (gx + 1) * 12), y1 = (int)uy(14 + (gy + 1) * 89 / 8.0f);
+            unsigned r = 0, g = 0, b = 0, n = 0;
+            for (int y = y0; y < y1; y++)
+                for (int x = x0; x < x1; x++) {
+                    Uint32 p = g_frame[y * g_fw + x];
+                    r += (p >> 16) & 255; g += (p >> 8) & 255; b += p & 255; n++;
+                }
+            if (!n) continue;
+            const unsigned char *ref = SIG_CREDITS + (gy * 12 + gx) * 3;
+            int d = SDL_abs((int)(r / n) - ref[0]) + SDL_abs((int)(g / n) - ref[1]) + SDL_abs((int)(b / n) - ref[2]);
+            if (d < 90) ok++;
+        }
+    return ok >= 67; /* 70% of 96 cells */
+}
+
+static int g_title_captured;
+static int g_mode_candidate = -1, g_mode_votes;
+static const char *MODE_NAMES[] = {"other", "lab", "battle", "desk", "console"};
+
+/* look at the frame and decide what's on screen (called every few frames) */
+static void classify_screen(void)
+{
+    if (!g_frame) return;
+    unsigned char grid[480];
+    frame_grid(grid);
+    int dark = 0;
+    for (int i = 0; i < 480; i += 3) if (grid[i] + grid[i + 1] + grid[i + 2] < 36) dark++;
+    if (dark > 150) return; /* fade to black: keep the current layout */
+
+    int m;
+    int layout = detect_layout();
+    if (layout == 0) m = MODE_LAB;
+    else if (layout == 1) m = MODE_BATTLE;
+    else if (is_console()) { m = MODE_CONSOLE; g_credits = is_credits_picture(); }
+    else if (grid_match(grid, SIG_DESK) >= 0.7f) m = MODE_DESK;
+    else {
+        m = MODE_OTHER;
+        if (!g_title_captured && grid_match(grid, SIG_TITLE) >= 0.85f) {
+            if (!g_title || g_title_w != g_fw || g_title_h != g_fh) {
+                SDL_free(g_title);
+                g_title = (Uint32 *)SDL_malloc((size_t)g_fw * g_fh * 4);
+                g_title_w = g_fw; g_title_h = g_fh;
+            }
+            SDL_memcpy(g_title, g_frame, (size_t)g_fw * g_fh * 4);
+            g_title_serial++;
+            g_title_captured = 1;
+            title_save();
+        }
+    }
+    if (m == g_mode) { g_mode_candidate = -1; return; }
+    if (m != g_mode_candidate) { g_mode_candidate = m; g_mode_votes = 1; return; }
+    if (++g_mode_votes >= 2) {
+        SDL_Log("screen: %s -> %s (program %s)", MODE_NAMES[g_mode], MODE_NAMES[m], g_prog);
+        g_mode = m;
+        g_mode_candidate = -1;
+        if (m == MODE_LAB || m == MODE_BATTLE) g_last_layout = m == MODE_LAB ? 0 : 1;
+    }
+}
+
+/* a game menu or dialog is open in the monitor (yellow backdrop) */
+static int game_menu_open(void)
+{
+    if (!is_play_mode()) return 0;
+    int yellow = 0, n = 0;
+    for (int y = 16; y < 100; y += 8)
+        for (int x = 20; x < 300; x += 10) {
+            Uint32 p = frame_px((float)x, (float)y);
+            int r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
+            if (r > 180 && g > 180 && b < 150) yellow++;
+            n++;
+        }
+    return yellow * 4 > n;
+}
+
+/* Pointer parking: the game draws its own cursor, so after a tap the pointer
+ * is moved out of the way once nothing depends on where it is. */
+static int g_park_due;
+static void park_later(int frames)
+{
+    if (cfg_int("park_pointer", 1)) g_park_due = g_frame_no + frames;
+}
 static int g_zoom_guess = 0, g_zoom_last_target = -1, g_zoom_last_seen = -1;
 
 static void action_zoom(void)
@@ -986,17 +1216,17 @@ static void action_press(int a)
         if (a == A_OSK) { swap_screens(); return; }        /* hotkey + select: swap screens */
     }
     switch (a) {
-    case A_TOP: action_half(VIEW_TOP); break;
-    case A_BOTTOM: action_half(VIEW_BOTTOM); break;
+    case A_TOP: if (is_play_mode()) action_half(VIEW_TOP); break;
+    case A_BOTTOM: if (is_play_mode()) action_half(VIEW_BOTTOM); break;
     case A_PANL:
     case A_PANR:
-        if (g_view != VIEW_FULL) {
+        if (is_play_mode() && g_view != VIEW_FULL) {
             float step = cfg_float("pan_step", 32);
             g_pan_target[g_view] = clampf(g_pan_target[g_view] + (a == A_PANL ? -step : step), 0, max_pan(g_view));
             g_pan_at = SDL_GetTicks();
         }
         break;
-    case A_ZOOM: action_zoom(); break;
+    case A_ZOOM: if (is_play_mode()) action_zoom(); break;
     case A_DISK:
         if (g_held[A_OSK]) { g_running = 0; return; }       /* select + start: quit */
         action_disk();
@@ -1055,7 +1285,7 @@ static float g_stick[2];
 static void update_continuous(float dt)
 {
     Uint32 now = SDL_GetTicks();
-    if (g_view != VIEW_FULL) {
+    if (is_play_mode() && g_view != VIEW_FULL) {
         float speed = cfg_float("pan_speed", 240); /* frame px per second */
         float dir = 0;
         if (g_held[A_PANL] && now - g_held_since[A_PANL] > 220) dir -= 1;
@@ -1091,7 +1321,7 @@ static int bottom_to_frame(float nx, float ny, float *fx, float *fy)
     Screen *s = g_scr[0].role == 1 ? &g_scr[0] : &g_scr[1];
     int vw = s->vp.w, vh = s->vp.h;
     FRect src, dst;
-    view_geometry(g_view, vw, vh, &src, &dst);
+    screen_geometry(1, vw, vh, &src, &dst);
     float px = nx * vw, py = ny * vh;
     float u = (px - dst.x) / dst.w, v = (py - dst.y) / dst.h;
     int inside = u >= 0 && u <= 1 && v >= 0 && v <= 1;
@@ -1112,8 +1342,14 @@ static void touch_down(float nx, float ny)
         int vx = (int)(nx * s->vp.w), vy = (int)(ny * s->vp.h);
         if (osk_tap(vx, vy)) { g_touch_down = 1; g_touch_in_osk = 1; return; }
     }
+    /* The credits after EXIT TO DOS only respond to Escape */
+    if (g_mode == MODE_CONSOLE && g_credits) {
+        tap_key(RETROK_ESCAPE);
+        g_touch_down = 1; g_touch_in_osk = 1;
+        return;
+    }
     float fx, fy;
-    if (!bottom_to_frame(nx, ny, &fx, &fy)) return;
+    if (!bottom_to_frame(nx, ny, &fx, &fy) && !(g_mode == MODE_CONSOLE || g_mode == MODE_OTHER)) return;
     g_touch_down = 1;
     g_touch_in_osk = 0;
     g_touch_btn = g_held[A_RIGHTMOD] ? 1 : 0;
@@ -1140,6 +1376,7 @@ static void touch_up(void)
     g_touch_down = 0;
     if (g_touch_in_osk) { g_touch_in_osk = 0; return; }
     q_push(EV_UP, 0, 0, g_touch_btn);
+    park_later(cfg_int("park_delay_frames", 45));
 }
 
 /* ---- direct evdev touch (bypasses compositor seat/mapping quirks) ------- */
@@ -1327,8 +1564,8 @@ static void script_step(void)
         else if (!SDL_strcmp(cmd, "shot")) { SDL_strlcpy(g_pending_shot, a1, sizeof g_pending_shot); return; }
         else if (!SDL_strcmp(cmd, "frame")) save_frame(a1);
         else if (!SDL_strcmp(cmd, "pan")) { if (g_view != VIEW_FULL) g_pan[g_view] = g_pan_target[g_view] = clampf((float)SDL_atof(a1), 0, max_pan(g_view)); }
-        else if (!SDL_strcmp(cmd, "info")) SDL_Log("info: view=%d pan=%.1f layout=%d zoom=%d ptr=%.1f,%.1f frame=%dx%d",
-                                                   g_view, g_pan[g_view], detect_layout(), detect_zoom(detect_layout()), g_ptr_x, g_ptr_y, g_fw, g_fh);
+        else if (!SDL_strcmp(cmd, "info")) SDL_Log("info: credits=%d mode=%s prog=%s view=%d pan=%.1f layout=%d zoom=%d ptr=%.1f,%.1f frame=%dx%d",
+                                                   g_credits, MODE_NAMES[g_mode], g_prog, g_view, g_pan[g_view], detect_layout(), detect_zoom(detect_layout()), g_ptr_x, g_ptr_y, g_fw, g_fh);
         else if (!SDL_strcmp(cmd, "quit")) { g_running = 0; return; }
         else SDL_Log("script: unknown command '%s'", cmd);
     }
@@ -1659,6 +1896,8 @@ int main(int argc, char **argv)
     if (!g_single_window || cfg_int("hide_cursor", 0)) SDL_ShowCursor(SDL_DISABLE);
     binds_init();
     evdev_open();
+    title_load();
+    g_title_captured = g_title != NULL;
 
     g_audio_rate = (int)(core.av.timing.sample_rate > 0 ? core.av.timing.sample_rate : 48000);
     SDL_AudioSpec want, have;
@@ -1678,7 +1917,7 @@ int main(int argc, char **argv)
     int vsync = cfg_int("vsync", 1) && !g_nothrottle;
     if (vsync) SDL_RenderSetVSync(g_scr[0].rc->ren, 1);
 
-    while (g_running && !core.shutdown) {
+    while (g_running && !core.shutdown && !g_quit_request) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) handle_event(&e);
         evdev_poll();
@@ -1701,7 +1940,14 @@ int main(int argc, char **argv)
             q_process();
             core.run();
             g_frame_no++;
-            if ((g_frame_no & 7) == 0) { int l = detect_layout(); if (l >= 0) g_last_layout = l; }
+            if ((g_frame_no & 7) == 0) classify_screen();
+            if (g_inject_park && q_empty()) { g_inject_park = 0; park_later(cfg_int("park_delay_frames", 45)); }
+            if (g_park_due && g_frame_no >= g_park_due && q_empty() && !g_touch_down) {
+                if (!game_menu_open() && SDL_fabsf(g_stick[0]) < 0.2f && SDL_fabsf(g_stick[1]) < 0.2f) {
+                    q_push(EV_MOVE, ux(cfg_float("park_x", 319)), uy(cfg_float("park_y", 199)), 0);
+                    g_park_due = 0;
+                }
+            }
         }
         update_viewports();
         for (int i = 0; i < 2; i++) {
