@@ -1779,6 +1779,10 @@ static void script_step(void)
         else if (!SDL_strcmp(cmd, "move")) q_push(EV_MOVE, ux((float)SDL_atof(a1)), uy((float)SDL_atof(a2)), 0);
         else if (!SDL_strcmp(cmd, "shot")) { SDL_strlcpy(g_pending_shot, a1, sizeof g_pending_shot); return; }
         else if (!SDL_strcmp(cmd, "frame")) save_frame(a1);
+        else if (!SDL_strcmp(cmd, "dframe") && g_disp) { /* frame as displayed (parked cursor painted out) */
+            SDL_Surface *sf = SDL_CreateRGBSurfaceWithFormatFrom(g_disp, g_fw, g_fh, 32, g_fw * 4, SDL_PIXELFORMAT_RGB888);
+            if (sf) { SDL_SaveBMP(sf, a1); SDL_FreeSurface(sf); }
+        }
         else if (!SDL_strcmp(cmd, "pan")) { if (g_view != VIEW_FULL) g_pan[g_view] = g_pan_target[g_view] = clampf((float)SDL_atof(a1), 0, max_pan(g_view)); }
         else if (!SDL_strcmp(cmd, "info")) SDL_Log("info: btn=%d%d credits=%d mode=%s prog=%s view=%d pan=%.1f layout=%d zoom=%d ptr=%.1f,%.1f frame=%dx%d",
                                                    g_btn[0], g_btn[1], g_credits, MODE_NAMES[g_mode], g_prog, g_view, g_pan[g_view], detect_layout(), detect_zoom(detect_layout()), g_ptr_x, g_ptr_y, g_fw, g_fh);
